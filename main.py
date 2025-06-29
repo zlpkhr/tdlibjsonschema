@@ -1,7 +1,7 @@
-import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
-import httpx
+import requests
 from parsel import Selector
 
 TDLIB_DOCS_BASE_URL = "https://core.telegram.org/tdlib/docs"
@@ -45,18 +45,20 @@ class Cls:
         return self.name
 
 
-async def get_abstract_child_names(cls: AbsCls, client: httpx.AsyncClient):
-    resp = await client.get(cls.url)
-    selector = Selector(text=resp.text)
+def get_abstract_child_names(cls: AbsCls):
+    html_content = requests.get(cls.url).text
+    selector = Selector(text=html_content)
+
     names = selector.css(
         'body > div.contents > p:nth-child(2) a.el[href^="classtd"]::text'
     ).getall()
+
     return names
 
 
-async def get_fields(cls: Cls, client: httpx.AsyncClient):
-    resp = await client.get(cls.url)
-    selector = Selector(text=resp.text)
+def get_fields(cls: Cls):
+    html_content = requests.get(cls.url).text
+    selector = Selector(text=html_content)
 
     table_el = selector.css("body > div.contents > table:first-of-type")
 
@@ -91,29 +93,32 @@ async def get_fields(cls: Cls, client: httpx.AsyncClient):
     return fields
 
 
-async def get_all_clss():
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(OBJECT_CLASS_REFERENCE_URL)
-        selector = Selector(text=resp.text)
+def get_all_clss():
+    html_content = requests.get(OBJECT_CLASS_REFERENCE_URL).text
+    selector = Selector(text=html_content)
 
-        els = selector.css('body > div.contents > p:nth-child(2) a.el[href^="classtd"]')
+    els = selector.css('body > div.contents > p:nth-child(2) a.el[href^="classtd"]')
 
-        async def process_el(el):
-            name = el.css("::text").get()
-            path = el.css("::attr(href)").get()
-            abstract = name[0].isupper()
-            url = build_class_url(path)
-            if abstract:
-                abs_cls = AbsCls(name, url, [])
-                abs_cls.child_names = await get_abstract_child_names(abs_cls, client)
-                return abs_cls
-            else:
-                cls_obj = Cls(name, url, [])
-                cls_obj.fields = await get_fields(cls_obj, client)
-                return cls_obj
+    clss = []
 
-        clss = await asyncio.gather(*[process_el(el) for el in els])
-        return clss
+    def process_el(el):
+        name = el.css("::text").get()
+        path = el.css("::attr(href)").get()
+        abstract = name[0].isupper()
+
+        if abstract:
+            cls = AbsCls(name, build_class_url(path), [])
+            cls.child_names = get_abstract_child_names(cls)
+            return cls
+        else:
+            cls = Cls(name, build_class_url(path), [])
+            cls.fields = get_fields(cls)
+            return cls
+
+    with ThreadPoolExecutor() as executor:
+        clss = list(executor.map(process_el, els))
+
+    return clss
 
 
 typedefjson = {
@@ -126,10 +131,11 @@ typedefjson = {
 }
 
 
-async def main():
-    classes = await get_all_clss()
+def main():
+    classes = get_all_clss()
+
     print(next(cls for cls in classes if isinstance(cls, AbsCls)))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
