@@ -77,10 +77,9 @@ def get_fields(cls: Cls):
         if len(types) > 0:
             prev = None
             for type_name in reversed(types):
-                if type_name == "object_ptr" and prev is not None:
-                    prev.cls = True
-                    continue
                 ft = FieldType(type_name, child=prev)
+                if ft.name == "object_ptr" and ft.child is not None:
+                    ft.child.cls = True
                 prev = ft
             type = prev
         else:
@@ -119,16 +118,6 @@ def get_all_clss():
         clss = list(executor.map(process_el, els))
 
     return clss
-
-
-typedefjson = {
-    "int32": int,
-    "int53": int,
-    "int64": str,
-    "string": str,
-    "bytes": str,
-    "array": list,
-}
 
 
 def main():
